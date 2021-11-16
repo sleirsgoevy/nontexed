@@ -33,7 +33,7 @@ HTML = b"""\
 <textarea id="nontexed_in" style="margin: 0; width: 100%; height: 100%" onkeyup="update(); return true" onmouseup="update(); return true">CUR_DATA</textarea>
 </td>
 <td width="50%" style="position: relative; padding: 0">
-<iframe id="iframe" src="/data/index.html" style="margin: 0; width: 100%; height: 100%"></iframe>
+<iframe id="iframe" src="data/index.html" style="margin: 0; width: 100%; height: 100%"></iframe>
 </td>
 </tr>
 </table>
@@ -41,7 +41,7 @@ HTML = b"""\
 function update()
 {
     var xhr = new XMLHttpRequest();
-    xhr.open('POST', '/update', true);
+    xhr.open('POST', 'update', true);
     xhr.onload = function()
     {
         var iframe = document.getElementById('iframe');
@@ -63,12 +63,12 @@ HTML_LIVE = b"""\
 <title>NontexedWeb</title>
 </head>
 <body style="padding: 0">
-<iframe id="iframe" src="/data/index.html" style="margin: 0; width: 100%; height: 100%"></iframe>
+<iframe id="iframe" src="data/index.html" style="margin: 0; width: 100%; height: 100%"></iframe>
 <script>
 function update()
 {
     var xhr = new XMLHttpRequest();
-    xhr.open('POST', '/longpoll', true);
+    xhr.open('POST', 'longpoll', true);
     xhr.onload = function()
     {
         if(xhr.responseText == 'ok')
@@ -165,6 +165,14 @@ class NontexedRequestHandler(http.server.BaseHTTPRequestHandler):
 
 class NontexedServer(socketserver.ThreadingMixIn, http.server.HTTPServer): pass
 
+def create_server(addr, handler=NontexedRequestHandler):
+    srv = NontexedServer(addr, handler)
+    srv.files = {}
+    srv.main_lock = threading.Lock()
+    srv.lp_queue = []
+    srv.cur_data = ''
+    return srv
+
 def main(*args):
     if '-b' in args:
         import webbrowser
@@ -173,11 +181,7 @@ def main(*args):
         try: addr = ('', int(args[args.index('--bind')+1]))
         except IndexError: addr = ('', 8080)
     else: addr = ('127.0.0.1', 8080)
-    srv = NontexedServer(addr, NontexedRequestHandler)
-    srv.files = {}
-    srv.main_lock = threading.Lock()
-    srv.lp_queue = []
-    srv.cur_data = ''
+    srv = create_server(addr)
     srv.serve_forever()
 
 if __name__ == '__main__':
