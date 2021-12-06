@@ -384,16 +384,18 @@ def format_formula(tr, rank=-1, wtf=None):
         if rank > 0: ans = SimpleExpr('('+ans+')')
         return ans
     elif isinstance(tr, ast.Subscript):
+        if isinstance(tr.slice, ast.Index): tsv = tr.slice.value
+        else: tsv = tr.slice
         if isinstance(tr.value, ast.Name) and tr.value.id == '__dollar':
-            if isinstance(tr.slice.value, (ast.List, ast.Set)):
-                if isinstance(tr.slice.value, ast.Set):
-                    first = '<td rowspan="'+str(len(tr.slice.value.elts))+'" style="position: relative; width: 10px; transform: scaleX(-1)">'+BLOCK+'</td>'
-                    last = '<td rowspan="'+str(len(tr.slice.value.elts))+'" style="position: relative; width: 10px">'+BLOCK+'</td>'
+            if isinstance(tsv, (ast.List, ast.Set)):
+                if isinstance(tsv, ast.Set):
+                    first = '<td rowspan="'+str(len(tsv.elts))+'" style="position: relative; width: 10px; transform: scaleX(-1)">'+BLOCK+'</td>'
+                    last = '<td rowspan="'+str(len(tsv.elts))+'" style="position: relative; width: 10px">'+BLOCK+'</td>'
                 else:
-                    first = '<td rowspan="'+str(len(tr.slice.value.elts))+'" style="border-top: 2px solid black; border-bottom: 2px solid black; border-left: 2px solid black"></td>'
+                    first = '<td rowspan="'+str(len(tsv.elts))+'" style="border-top: 2px solid black; border-bottom: 2px solid black; border-left: 2px solid black"></td>'
                     last = ''
                 ans = '<table style="display: inline-table; vertical-align: middle">'
-                for i in tr.slice.value.elts:
+                for i in tsv.elts:
                     ans += '<tr>'+first+'<td>'+format_formula(i)+'</td>'+last+'</tr>'
                     first = last = ''
                 ans += '</table>'
@@ -402,12 +404,12 @@ def format_formula(tr, rank=-1, wtf=None):
         ans = format_formula(tr.value)
         good = type(ans)
         bad = False
-        if isinstance(tr.slice.value, ast.Str):
-            idx = html.escape(tr.slice.value.s)
+        if isinstance(tsv, ast.Str):
+            idx = html.escape(tsv.s)
             bad = True
         else:
-            idx = '<sub>'+format_formula(tr.slice.value)+'</sub>'
-            if isinstance(tr.slice.value, ast.Tuple): idx = '<sub>'+idx[6:-7]+'</sub>'
+            idx = '<sub>'+format_formula(tsv)+'</sub>'
+            if isinstance(tsv, ast.Tuple): idx = '<sub>'+idx[6:-7]+'</sub>'
         if False: #isinstance(tr.value, ast.Subscript) and not bad:
             ans = ans[:-6]+idx+'</sub>'
         else:
