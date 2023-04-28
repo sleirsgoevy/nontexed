@@ -46,7 +46,7 @@ function update()
     {
         var iframe = document.getElementById('iframe');
         if(xhr.responseText)
-            iframe.contentWindow.document.location.href = xhr.responseText;
+            iframe.contentWindow.document.location.href = document.location.href + xhr.responseText.substr(1);
         else
             iframe.contentWindow.document.location.href = iframe.contentWindow.document.location.href;
     }
@@ -92,7 +92,7 @@ class NontexedRequestHandler(http.server.BaseHTTPRequestHandler):
         if self.path == '/':
             if self.client_address[0] != '127.0.0.1':
                 self.send_response(302)
-                self.send_header('Location', '/live')
+                self.send_header('Location', 'live')
                 self.end_headers()
                 return
             data = HTML.replace(b'CUR_DATA', html.escape(self.server.cur_data).encode('utf-8'))

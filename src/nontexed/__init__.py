@@ -64,8 +64,20 @@ def expand_preps(g):
 
 def parse_mdlike(g):
     in_ul = 0
+    in_ol = []
+    li_opened = False
     for l in g:
+        l = l.strip()
+        if l.startswith('+ '):
+            yield ('<p>%s</p>\n', l[2:])
+            continue
+        if li_opened:
+            yield ('</li>\n', None)
+            li_opened = False
         if set(l.split(' ', 1)[0]) == {'*'}:
+            while in_ol:
+                yield ('</ol>\n', None)
+                in_ol.pop()
             cnt = l.find(' ')
             while in_ul < cnt:
                 yield ('<ul>\n', None)
@@ -73,11 +85,31 @@ def parse_mdlike(g):
             while in_ul > cnt:
                 yield ('</ul>\n', None)
                 in_ul -= 1
-            yield ('<li>%s</li>\n', l.split(' ', 1)[-1])
+            yield ('<li>\n', None)
+            li_opened = True
+            yield ('<p>%s</p>\n', l.split(' ', 1)[-1])
         else:
             while in_ul > 0:
                 yield ('</ul>\n', None)
                 in_ul -= 1
+            olsplit = []
+            for i in l.split('.')[:-1]:
+                if not i.isnumeric() or i.startswith('0'):
+                    break
+                olsplit.append(int(i))
+            if olsplit == in_ol + [1]:
+                in_ol.append(1)
+                yield ('<ol>\n', None)
+            elif in_ol and olsplit == in_ol[:-1] + [in_ol[-1]+1]:
+                in_ol[-1] += 1
+            else:
+                while in_ol:
+                    yield ('</ol>\n', None)
+                    in_ol.pop()
+            if in_ol:
+                yield ('<li>\n', None)
+                li_opened = True
+                l = l.split('.', len(in_ol))[-1]
             if set(l.split(' ', 1)[0]) == {'#'}:
                 yield ('<h%d>%%s</h%d>\n'%((l.find(' '),)*2), l.split(' ', 1)[-1])
             else:
@@ -205,7 +237,7 @@ OPS = {'In': '&isin;', 'NotIn': '&notin;',
     'Not': ('<span style="display: inline-block; border-top: 1px solid black; margin-top: 3px">%s</span>', 4)
 }
 DOLLAR = {k: '&%s;'%k for k in html.entities.name2codepoint}
-DOLLAR.update({'R': '&#8477;', 'N': '&#8469;', 'Z': '&#8484;', 'C': '&#8450;', 'Q': '&#8474;', 'P': '&#8473;', 'B0': 'B&#778;'})
+DOLLAR.update({'R': '&#8477;', 'N': '&#8469;', 'Z': '&#8484;', 'C': '&#8450;', 'Q': '&#8474;', 'P': '&#8473;', 'B0': 'B&#778;', 'H': '&#8461;', 'D': '&#120123;', 'E': '&#120124;'})
 for i in range(0x41, 0x5b):
     DOLLAR['SCRIPT'+chr(i)] = '&#%d;'%(i+0x1d4d0)
 
@@ -317,6 +349,8 @@ def format_formula(tr, rank=-1, wtf=None):
         while tr_id.startswith('__'): tr_id = tr_id[2:]
         if tr_id.startswith('_'):
             return '<span style="display: inline-block; border-top: 1px solid black; margin-top: 3px; margin-left: 0; margin-right: 0; margin-bottom: 0; padding: 0"><i>'+html.escape(tr_id[1:])+'</i></span>'
+        elif tr_id.endswith('_'):
+            return '<u><i>'+html.escape(tr_id[:-1])+'</i></u>'
         return SimpleExpr('<i>'+html.escape(tr_id)+'</i>')
     elif isinstance(tr, ast.Attribute):
         if isinstance(tr.value, ast.Name) and tr.value.id == '__dollar':
@@ -631,10 +665,14 @@ def format_formula(tr, rank=-1, wtf=None):
                     return ans
                 elif tr.func.attr == '_term':
                     return format_formula(tr.args[0], rank, 'term')
-                elif tr.func.attr == '_xor':
+                elif tr.func.attr in ('_xor', '_dot'):
                     ans = format_formula(tr.args[0])
-                    assert ans in ('<i>'+x+'</i>' for x in list(map(chr, range(ord('A'), ord('Z')+1)))+list(map(chr, range(ord('a'), ord('z')+1))))
-                    ans = ans[:-4]+'&#770;'+ans[-4:]
+                    if ans in DOLLAR.values():
+                        assert len(html.unescape(ans)) == 1
+                        ans = {'_xor': '&#770;', '_dot': '&#775;'}[tr.func.attr]+ans
+                    else:
+                        assert ans in ('<i>'+x+'</i>' for x in list(map(chr, range(ord('A'), ord('Z')+1)))+list(map(chr, range(ord('a'), ord('z')+1))))
+                        ans = ans[:-4]+{'_xor': '&#770;', '_dot': '&#775;'}[tr.func.attr]+ans[-4:]
                     return SimpleExpr(ans)
                 elif tr.func.attr == '_wave':
                     ans = format_formula(tr.args[0])
@@ -834,7 +872,3 @@ def main(src, dst, *, do_open=None):
     for v in files.values():
         v.write('</body>\n</html>\n')
         v.close()
-
-if __name__ == '__main__':
-    assert len(sys.argv) == 3, "usage: nontexed <src> <dst_dir>"
-    main(*sys.argv[1:])
