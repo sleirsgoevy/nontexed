@@ -1,4 +1,4 @@
-import html, os
+import html, os, mimetypes, base64
 
 def skip_braces(s, i):
     brlevel = 0
@@ -112,6 +112,8 @@ def parse_mdlike(g):
                 l = l.split('.', len(in_ol))[-1]
             if set(l.split(' ', 1)[0]) == {'#'}:
                 yield ('<h%d>%%s</h%d>\n'%((l.find(' '),)*2), l.split(' ', 1)[-1])
+            elif set(l.split('| ', 1)[0]) == {'#'}:
+                yield ('<h%d><p align="center">%%s</p></h%d>'%((l.find('|'),)*2), l.split(' ', 1)[-1])
             else:
                 yield ('<p>%s</p>', l)
     if in_ul: yield ('</ul>\n', None)
@@ -148,17 +150,33 @@ def parse_wiki_links(s):
     data[0] = data[0].replace('$', '$$')
     return ''.join(data)[:-1]
 
+TITLE_VALID_KEYS = [i+j for i in 'umd' for j in 'lcr']
+TITLE_SLOTS = ['valign="%s" align="%s"%s%s'%(i, j, ' width="1px"' if j != 'center' else '', ' height="1px"' if i != 'middle' else '') for i in ('top', 'middle', 'bottom') for j in ('left', 'center', 'right')]
+
 def parse_formulas(g):
     for t, l in g:
+        prefix = []
+        suffix = []
         if l == None:
             yield (t, l)
             continue
-        elif l.startswith('[[') and l.endswith(']]'):
+        if l.startswith('$!title '):
+            _, key, content = (l+' ').split(' ', 2)
+            assert key in TITLE_VALID_KEYS, key
+            content = content.strip()
+            prefix.append({'type': 'title', 'key': key})
+            l = content
+        if l.startswith('[[') and l.endswith(']]'):
             yield (t, [{'type': 'selectfile', 'data': l[2:-2]}])
             continue
         elif l == '$!pagebreak':
-            yield (t, [{'type': 'pagebreak', 'data': ''}])
+            yield (t, prefix+[{'type': 'pagebreak', 'data': ''}])
             continue
+        elif l.startswith('$!img '):
+            _, src, caption = (l+' ').split(' ', 2)
+            caption = caption.strip()
+            prefix.append({'type': 'img', 'src': src})
+            l = caption
         if '$TODO' in l:
             l = l.replace('$TODO', 'TODO')
             t %= '<font color="red">%s</font>'
@@ -177,7 +195,7 @@ def parse_formulas(g):
             i = i3
             g2.send('formula')
             ans.append({'type': 'formula', 'data': parse_formula(l[i2+2:i3-1])})
-        yield (t, ans)
+        yield (t, prefix+ans+suffix)
 
 import ast
 
@@ -220,8 +238,8 @@ def parse_formula(fm):
 
 OPS = {'In': '&isin;', 'NotIn': '&notin;',
     'Eq': ' = ', 'NotEq': ' &ne; ', 'Gt': ' &gt; ', 'GtE': ' &ge; ', 'Lt': ' &lt; ', 'LtE': ' &le; ',
-    'Add': ('%s+%s', 8, 8, 9),
-    'Sub': ('%s&ndash;%s', 8, 8, 9),
+    'Add': ('%s + %s', 8, 8, 9),
+    'Sub': ('%s &ndash; %s', 8, 8, 9),
     'Mult': ('%s&middot;%s', 9, 9, 10),
     'FloorDiv': ('<table style="display: inline-table; vertical-align: middle; margin-left: 1px; margin-right: 1px" cellspacing=0><tr><td align="center" style="border-bottom: 1px solid black">%s</td></tr><tr><td align="center">%s</td></tr></table>', 10, 0, 0),
     'Div': ('%s/%s', 9, 9, 10),#('<table style="display: inline-table; vertical-align: middle" cellspacing=0><tr><td><sub>%s</sub></td><td>/</td></tr><tr><td>/</td><td><sup>%s</sup></td></tr></table>', 9, 0, 0),
@@ -235,6 +253,10 @@ OPS = {'In': '&isin;', 'NotIn': '&notin;',
     'UAdd': ('+%s', 9),
     'USub': ('&ndash;%s', 9),
     'Not': ('<span style="display: inline-block; border-top: 1px solid black; margin-top: 3px">%s</span>', 4)
+}
+OPS_SUB = {
+    'Add': ('%s+%s', 8, 8, 9),
+    'Sub': ('%s&ndash;%s', 8, 8, 9),
 }
 DOLLAR = {k: '&%s;'%k for k in html.entities.name2codepoint}
 DOLLAR.update({'R': '&#8477;', 'N': '&#8469;', 'Z': '&#8484;', 'C': '&#8450;', 'Q': '&#8474;', 'P': '&#8473;', 'B0': 'B&#778;', 'H': '&#8461;', 'D': '&#120123;', 'E': '&#120124;'})
@@ -311,11 +333,13 @@ def format_formula(tr, rank=-1, wtf=None):
         b = tr.op
         c = tr.right
         op, r, rl, rr = OPS[type(tr.op).__name__]
+        if wtf == 'subsup' and type(tr.op).__name__ in OPS_SUB:
+            op, r, rl, rr = OPS_SUB[type(tr.op).__name__]
         if isinstance(tr.op, ast.BitAnd) and isinstance(c, ast.UnaryOp) and isinstance(c.op, ast.Invert):
             op, r, rl, rr = OPS['BitSub']
             c = c.operand
-        left = format_formula(a, rl)
-        right = format_formula(c, rr)
+        left = format_formula(a, rl, 'subsup' if wtf == 'subsup' else None)
+        right = format_formula(c, rr, 'subsup' if wtf == 'subsup' or isinstance(tr.op, ast.Pow) else None)
         good = type(left) if isinstance(tr.op, ast.Pow) else str
         if isinstance(tr.op, ast.Mult) and (isinstance(left, (LeftSimpleExpr, RightSimpleExpr, SimpleExpr)) and isinstance(right, SimpleExpr) or isinstance(left, RightSimpleExpr) and isinstance(right, RightSimpleExpr)):
             op = '%s%s'
@@ -351,6 +375,8 @@ def format_formula(tr, rank=-1, wtf=None):
             return '<span style="display: inline-block; border-top: 1px solid black; margin-top: 3px; margin-left: 0; margin-right: 0; margin-bottom: 0; padding: 0"><i>'+html.escape(tr_id[1:])+'</i></span>'
         elif tr_id.endswith('_'):
             return '<u><i>'+html.escape(tr_id[:-1])+'</i></u>'
+        if wtf == 'callee' and len(tr_id) > 1:
+            return SimpleExpr(html.escape(tr_id))
         return SimpleExpr('<i>'+html.escape(tr_id)+'</i>')
     elif isinstance(tr, ast.Attribute):
         if isinstance(tr.value, ast.Name) and tr.value.id == '__dollar':
@@ -442,7 +468,7 @@ def format_formula(tr, rank=-1, wtf=None):
             idx = html.escape(tsv.s)
             bad = True
         else:
-            idx = '<sub>'+format_formula(tsv)+'</sub>'
+            idx = '<sub>'+format_formula(tsv, wtf='subsup')+'</sub>'
             if isinstance(tsv, ast.Tuple): idx = '<sub>'+idx[6:-7]+'</sub>'
         if False: #isinstance(tr.value, ast.Subscript) and not bad:
             ans = ans[:-6]+idx+'</sub>'
@@ -642,7 +668,7 @@ def format_formula(tr, rank=-1, wtf=None):
                     ans = BLOCK_INTED%(expr, up, down)
                     if rank > 8: ans = SimpleExpr('('+ans+')')
                     return ans
-                elif tr.func.attr in ('_lim', '_sup', '_inf', '_max', '_min', '_upperlim', '_lowerlim'):
+                elif tr.func.attr in ('_lim', '_sup', '_inf', '_max', '_min', '_upperlim', '_lowerlim', '_argmin', '_argmax'):
                     name = tr.func.attr[1:]
                     if name == 'lowerlim': name = '<u>lim</u>'
                     elif name == 'upperlim': name = '<span style="display: inline-block; border-top: 1px solid black; margin-top: 3px">lim</span>'
@@ -763,7 +789,7 @@ def format_formula(tr, rank=-1, wtf=None):
             ans = format_formula(tr.func, 11)+':'+format_formula(tr.args[0], 11, wtf)
             if rank > 11: ans = SimpleExpr('('+ans+')')
             return ans
-        ans = format_formula(tr.func, 11) + '(' + ', '.join(format_formula(i, 0) for i in tr.args) + ')'
+        ans = format_formula(tr.func, 11, 'callee') + '(' + ', '.join(format_formula(i, 0) for i in tr.args) + ')'
         if rank > 11: ans = '('+ans+')'
         return RightSimpleExpr(ans)
     elif isinstance(tr, ast.Dict):
@@ -821,12 +847,29 @@ def format_defs(g):
                 i['data'] = i['data'].replace('$-', '&mdash;').replace('$^', '&#8660;').replace('$&gt;', '&#8658;').replace('$&lt;', '&#8656;')
         yield (t, l)
 
+def flush_title_dict(title_dict):
+    yield '<table width="100%" height="100%">'
+    for i, (j, k) in enumerate(zip(TITLE_SLOTS, TITLE_VALID_KEYS)):
+        if i % 3 == 0:
+            yield '<tr>'
+        yield '<td '+j+'>'
+        for q in title_dict[k]: yield q
+        yield '</td>'
+        if i % 3 == 2:
+            yield '</tr>'
+    yield '</table>'
+
 def format_formulas(g):
+    title_dict = None
     for t, l in g:
         if l == None:
+            if title_dict is not None:
+                for i in flush_title_dict(title_dict): yield i
+                title_dict = None
             yield t
             continue
         ans = ''
+        title_key = None
         for i in l:
             if i['type'] == 'text': ans += i['data']
             elif i['type'] == 'formula':
@@ -835,9 +878,33 @@ def format_formulas(g):
                     fm = fm[1:-1]
                 ans += fm
             elif i['type'] == 'selectfile': yield ('selectfile', i['data'])
-            elif i['type'] == 'pagebreak': yield '<div class="pagebreak"></div>'
+            elif i['type'] == 'pagebreak':
+                if title_dict is not None:
+                    for i in flush_title_dict(title_dict): yield i
+                    title_dict = None
+                yield '<div class="pagebreak"></div>'
+            elif i['type'] == 'img':
+                with open(i['src'], 'rb') as file:
+                    img_data = file.read()
+                mt, _ = mimetypes.guess_type(i['src'])
+                if mt is None: mt = 'application/octet-stream'
+                ans += '<img src="data:%s;base64,%s" style="max-width: 100%%; max-height: 100%%"/></p><p align="center"><sup>'%(mt, base64.b64encode(img_data).decode('ascii'))
+                t = '<p align="center">%s</sup></p>'
+            elif i['type'] == 'title':
+                title_key = i['key']
         if not t.startswith('<h') and ans and ans[-1].isalnum() and l and l[-1]['type'] == 'text' and l[-1]['data']: ans += '.'
-        yield t % ans
+        if title_key is not None:
+            if title_dict is None:
+                title_dict = {k: [] for k in TITLE_VALID_KEYS}
+            title_dict[title_key].append(t % ans)
+        else:
+            if title_dict is not None:
+                for i in flush_title_dict(title_dict): yield i
+                title_dict = None
+            yield t % ans
+    if title_dict is not None:
+        for i in flush_title_dict(title_dict): yield i
+        title_dict = None
 
 import os.path, sys
 
