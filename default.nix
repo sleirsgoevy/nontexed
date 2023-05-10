@@ -1,6 +1,6 @@
-{nixpkgs?import<nixpkgs>{}}:
+{ pkgs ?import<nixpkgs>{} }:
 
-with nixpkgs;
+with pkgs;
 
 let
   py3 = "${python3.withPackages(ps: [ ps.pillow ps.numpy ])}/bin/python3";

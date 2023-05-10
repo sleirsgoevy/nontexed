@@ -177,6 +177,9 @@ def parse_formulas(g):
             caption = caption.strip()
             prefix.append({'type': 'img', 'src': src})
             l = caption
+        elif l.startswith('$!fm '):
+            prefix.append({'type': 'bigformula'})
+            l = l[5:].strip()
         if '$TODO' in l:
             l = l.replace('$TODO', 'TODO')
             t %= '<font color="red">%s</font>'
@@ -195,7 +198,17 @@ def parse_formulas(g):
             i = i3
             g2.send('formula')
             ans.append({'type': 'formula', 'data': parse_formula(l[i2+2:i3-1])})
-        yield (t, prefix+ans+suffix)
+        ans = prefix+ans+suffix
+        i = 0
+        while i + 1 < len(ans):
+            if ans[i]['type'] == 'bigformula':
+                if ans[i+1]['type'] == 'text':
+                    j, k = ans[i+1]['data'].split(' ', 1)
+                    ans[i+1:i+2] = [{'type': 'text', 'data': j}, {'type': 'text', 'data': k}]
+            i += 1
+        if i < len(ans) and ans[i]['type'] == 'bigformula':
+            ans.pop()
+        yield (t, ans)
 
 import ast
 
@@ -225,10 +238,12 @@ def parse_formula(fm):
                     i2 = skip_braces(fm, i+3)
                     assert fm[i2-1] == ')'
                     by_idx[i2-1] = ') else (_)'
-                elif i < len(fm) - 1 and fm[i + 1] in ('{', '['):
-                    fm2 += '__dollar['
+                elif i < len(fm) - 1 and fm[i + 1] in ('(', '{', '['):
+                    fm2 += '__dollar(['
                     i2 = skip_braces(fm, i + 1)
-                    fm = fm[:i2]+']'+fm[i2:]
+                    assert fm[i2 - 1] in (')', '}', ']')
+                    qq = fm[i + 1] + fm[i2 - 1]
+                    fm = fm[1:i2 - 1]+'], "'+qq+'")'+fm[i2:]
                 else:
                     fm2 += '__dollar._'
             else: fm2 += fm[i]
@@ -314,6 +329,8 @@ BLOCK_INTED = '''
 </tr>
 </table>
 '''
+
+SVG100 = '<?xml version="1.0" encoding="UTF-8"?><svg width="100" height="100" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">'
 
 class SimpleExpr(str):
     __slots__ = ()
@@ -446,21 +463,6 @@ def format_formula(tr, rank=-1, wtf=None):
     elif isinstance(tr, ast.Subscript):
         if isinstance(tr.slice, ast.Index): tsv = tr.slice.value
         else: tsv = tr.slice
-        if isinstance(tr.value, ast.Name) and tr.value.id == '__dollar':
-            if isinstance(tsv, (ast.List, ast.Set)):
-                if isinstance(tsv, ast.Set):
-                    first = '<td rowspan="'+str(len(tsv.elts))+'" style="position: relative; width: 10px; transform: scaleX(-1)">'+BLOCK+'</td>'
-                    last = '<td rowspan="'+str(len(tsv.elts))+'" style="position: relative; width: 10px">'+BLOCK+'</td>'
-                else:
-                    first = '<td rowspan="'+str(len(tsv.elts))+'" style="border-top: 2px solid black; border-bottom: 2px solid black; border-left: 2px solid black"></td>'
-                    last = ''
-                ans = '<table style="display: inline-table; vertical-align: middle">'
-                for i in tsv.elts:
-                    ans += '<tr>'+first+'<td>'+format_formula(i)+'</td>'+last+'</tr>'
-                    first = last = ''
-                ans += '</table>'
-                return ans
-            else: assert False, tr.value
         ans = format_formula(tr.value)
         good = type(ans)
         bad = False
@@ -478,7 +480,40 @@ def format_formula(tr, rank=-1, wtf=None):
     elif isinstance(tr, ast.Call):
         kwds = {i.arg: i.value for i in tr.keywords}
         if isinstance(tr.func, ast.Name):
-            if tr.func.id == 'range':
+            if tr.func.id == '__dollar':
+                tsv, braces = tr.args
+                assert isinstance(braces, ast.Str)
+                braces = braces.s
+                assert isinstance(tsv, ast.List)
+                elts = tsv.elts
+                if all(isinstance(i, ast.IfExp) for i in elts):
+                    assert all(isinstance(i.orelse, ast.Name) and i.orelse.id == '_' for i in elts)
+                    conds = [i.test for i in elts]
+                    elts = [i.body for i in elts]
+                    middle = '<td rowspan="'+str(len(elts))+'" style="opacity: 0"><ul><li></li></ul></td>'
+                else:
+                    conds = [None for i in elts]
+                    middle = ''
+                if braces[0] == '{':
+                    first = '<td rowspan="'+str(len(tsv.elts))+'" style="position: relative; width: 10px; transform: scaleX(-1)">'+BLOCK+'</td>'
+                elif braces[0] == '[':
+                    first = '<td rowspan="'+str(len(tsv.elts))+'" style="border-top: 2px solid black; border-bottom: 2px solid black; border-left: 2px solid black"></td>'
+                else:
+                    first = ''
+                if braces[1] == '}':
+                    last = '<td rowspan="'+str(len(tsv.elts))+'" style="position: relative; width: 10px">'+BLOCK+'</td>'
+                else:
+                    last = ''
+                ans = '<table style="display: inline-table; vertical-align: middle">'
+                for i, j in zip(elts, conds):
+                    ans += '<tr>'+first+'<td>'+format_formula(i)+'</td>'+middle
+                    if j is not None:
+                        ans += '<td>'+format_formula(j)+'</td>'
+                    ans += '</tr>'
+                    first = middle = last = ''
+                ans += '</table>'
+                return ans
+            elif tr.func.id == 'range':
                 if 'tp' in kwds: tp = kwds['tp'].s
                 else: tp = '[)'
                 arg0 = format_formula(tr.args[0], 0)
@@ -590,7 +625,7 @@ def format_formula(tr, rank=-1, wtf=None):
                 elif tr.func.attr in ('_matrix', '_table'):
 #                   assert all(isinstance(i, ast.Tuple) for i in tr.args)
                     ans = '<table style="display: inline-table; vertical-align: middle"'+(' cellpadding="5px"' if tr.func.attr == '_matrix' else (' border="1"' if 'borderless' not in kwds else ''))+' cellspacing="0">'
-                    lr = '<td rowspan="{cnt}" style="width: 10px; border-top: 2px solid black; border-{side}: 2px solid black; border-bottom: 2px solid black; border-top-{side}-radius: 10px; border-bottom-{side}-radius: 10px"></td>'
+                    lr = '<td rowspan="{cnt}" style="width: 5px; border-top: 2px solid black; border-{side}: 2px solid black; border-bottom: 2px solid black; border-top-{side}-radius: 5px; border-bottom-{side}-radius: 5px; padding: 0"></td>'
                     left = lr.format(cnt=len(tr.args), side='left')
                     right = lr.format(cnt=len(tr.args), side='right')
                     td = td1 = 'td align="center"' if tr.func.attr == '_matrix' else 'td'
@@ -693,11 +728,17 @@ def format_formula(tr, rank=-1, wtf=None):
                     return format_formula(tr.args[0], rank, 'term')
                 elif tr.func.attr in ('_xor', '_dot'):
                     ans = format_formula(tr.args[0])
+                    subst = {('_dot', '&#775;'): '&#776;'}
+                    for (a, b), c in subst.items():
+                        for a, b, c in ((a, b, c), (a, b+'</i>', c+'</i>')):
+                            if tr.func.attr == a and ans.endswith(b) and ans != b:
+                                ans = ans[:-len(b)] + c
+                                return SimpleExpr(ans)
                     if ans in DOLLAR.values():
                         assert len(html.unescape(ans)) == 1
                         ans = {'_xor': '&#770;', '_dot': '&#775;'}[tr.func.attr]+ans
                     else:
-                        assert ans in ('<i>'+x+'</i>' for x in list(map(chr, range(ord('A'), ord('Z')+1)))+list(map(chr, range(ord('a'), ord('z')+1))))
+                        assert ans in ('<i>'+x+'</i>' for x in list(map(chr, range(ord('A'), ord('Z')+1)))+list(map(chr, range(ord('a'), ord('z')+1)))), (tr.func.attr, ans)
                         ans = ans[:-4]+{'_xor': '&#770;', '_dot': '&#775;'}[tr.func.attr]+ans[-4:]
                     return SimpleExpr(ans)
                 elif tr.func.attr == '_wave':
@@ -724,6 +765,9 @@ def format_formula(tr, rank=-1, wtf=None):
                 elif tr.func.attr == '_link':
                     assert isinstance(tr.args[0], ast.Str)
                     return '<a href="'+html.escape(tr.args[0].s)+'">'+html.escape(tr.args[0].s)+'</a>'
+                elif tr.func.attr == '_stroke':
+                    ans = format_formula(tr.args[0])
+                    return '<div style="display: inline-block; position: relative">'+ans+'<img style="position: absolute; top: 0; left: 0; width: 100%; height: 100%" src="data:image/svg+xml;base64,'+base64.b64encode((SVG100+'<path vector-effect="non-scaling-stroke" d="M 0 100 L 100 0" stroke="black"></path></svg>').encode('ascii')).decode('ascii')+'"/></div>'
                 elif tr.func.attr == '_html' and os.environ.get('UNSAFE', '0') == '1':
                     assert isinstance(tr.args[0], ast.Str)
                     return tr.args[0].s
@@ -870,7 +914,13 @@ def format_formulas(g):
             continue
         ans = ''
         title_key = None
+        postarm = None
+        postarm_content = None
+        postarm_tmp = None
         for i in l:
+            if postarm is not None and postarm_content is None:
+                postarm_tmp = ans
+                ans = ''
             if i['type'] == 'text': ans += i['data']
             elif i['type'] == 'formula':
                 fm = format_formula(i['data'])
@@ -890,18 +940,26 @@ def format_formulas(g):
                 if mt is None: mt = 'application/octet-stream'
                 ans += '<img src="data:%s;base64,%s" style="max-width: 100%%; max-height: 100%%"/></p><p align="center"><sup>'%(mt, base64.b64encode(img_data).decode('ascii'))
                 t = '<p align="center">%s</sup></p>'
+            elif i['type'] == 'bigformula' and postarm is None:
+                t = '<table width="100%%"><tr><td style="opacity: 0" width="1px"><ul><li></li></ul></td><td align="left">%s</td>'
+                postarm = '<td align="right" valign="middle" width="1px">%s</td></tr></table>'
+                continue
             elif i['type'] == 'title':
                 title_key = i['key']
+            if postarm is not None and postarm_content is None:
+                postarm_content = ans
+                ans = postarm_tmp
         if not t.startswith('<h') and ans and ans[-1].isalnum() and l and l[-1]['type'] == 'text' and l[-1]['data']: ans += '.'
+        t = t % ans + (postarm % postarm_content if postarm_content is not None else '')
         if title_key is not None:
             if title_dict is None:
                 title_dict = {k: [] for k in TITLE_VALID_KEYS}
-            title_dict[title_key].append(t % ans)
+            title_dict[title_key].append(t)
         else:
             if title_dict is not None:
                 for i in flush_title_dict(title_dict): yield i
                 title_dict = None
-            yield t % ans
+            yield t
     if title_dict is not None:
         for i in flush_title_dict(title_dict): yield i
         title_dict = None
