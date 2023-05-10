@@ -97,15 +97,17 @@ def parse_mdlike(g):
                 if not i.isnumeric() or i.startswith('0'):
                     break
                 olsplit.append(int(i))
-            if olsplit == in_ol + [1]:
-                in_ol.append(1)
-                yield ('<ol>\n', None)
-            elif in_ol and olsplit == in_ol[:-1] + [in_ol[-1]+1]:
-                in_ol[-1] += 1
-            else:
-                while in_ol:
-                    yield ('</ol>\n', None)
-                    in_ol.pop()
+            while True:
+                if olsplit == in_ol + [1]:
+                    in_ol.append(1)
+                    yield ('<ol>\n', None)
+                    break
+                elif in_ol and olsplit == in_ol[:-1] + [in_ol[-1]+1]:
+                    in_ol[-1] += 1
+                    break
+                if not in_ol: break
+                in_ol.pop()
+                yield ('</ol>\n', None)
             if in_ol:
                 yield ('<li>\n', None)
                 li_opened = True
