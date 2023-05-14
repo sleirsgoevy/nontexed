@@ -204,7 +204,11 @@ def parse_formulas(g):
         i = 0
         while i + 1 < len(ans):
             if ans[i]['type'] == 'bigformula':
-                if ans[i+1]['type'] == 'text':
+                while i + 1 < len(ans) and ans[i+1]['type'] == 'text' and not ans[i+1]['data']:
+                    del ans[i+1]
+                if i + 1 == len(ans):
+                    break
+                if ans[i+1]['type'] == 'text' and ' ' in ans[i+1]['data']:
                     j, k = ans[i+1]['data'].split(' ', 1)
                     ans[i+1:i+2] = [{'type': 'text', 'data': j}, {'type': 'text', 'data': k}]
             i += 1
