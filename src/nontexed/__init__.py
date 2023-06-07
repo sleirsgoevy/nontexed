@@ -515,7 +515,7 @@ def format_formula(tr, rank=-1, wtf=None):
                     ans += '<tr>'+first+'<td>'+format_formula(i)+'</td>'+middle
                     if j is not None:
                         ans += '<td>'+format_formula(j)+'</td>'
-                    ans += '</tr>'
+                    ans += last + '</tr>'
                     first = middle = last = ''
                 ans += '</table>'
                 return ans
@@ -947,7 +947,7 @@ def format_formulas(g):
                 ans += '<img src="data:%s;base64,%s" style="max-width: 100%%; max-height: 100%%"/></p><p align="center"><sup>'%(mt, base64.b64encode(img_data).decode('ascii'))
                 t = '<p align="center">%s</sup></p>'
             elif i['type'] == 'bigformula' and postarm is None:
-                t = '<table width="100%%"><tr><td style="opacity: 0" width="1px"><ul><li></li></ul></td><td align="left">%s</td>'
+                t = '<table width="100%%" cellpadding="0" cellspacing="0"><tr><td style="opacity: 0" width="1px"><ul><li></li></ul></td><td align="left">%s</td>'
                 postarm = '<td align="right" valign="middle" width="1px">%s</td></tr></table>'
                 continue
             elif i['type'] == 'title':
